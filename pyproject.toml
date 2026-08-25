@@ -30,9 +30,8 @@ classifiers = [
 ]
 dependencies = [
     "griffe>=1.7",
-    "mkdocs>=1.6",
-    "mkdocs-material>=9.6",
-    "mkdocs-api-autonav>=0.2",
+    "mkdocstrings[python]>=2.0",
+    "zensical>=0.0.57",
 ]
 
 [project.urls]
@@ -98,10 +97,8 @@ ci = [
     "ghp-import>=2.1",
     "markdown-callouts>=0.4",
     "markdown-exec>=1.8",
-    "mkdocstrings[python]>=0.29",
     # YORE: EOL 3.10: Remove line.
     "tomli>=2.0; python_version < '3.11'",
-    "zensical>=0.0.21",
 ]
 
 [tool.uv]

@@ -30,12 +30,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections import defaultdict
 from importlib import import_module, metadata
 from pathlib import Path
 from subprocess import run
 from tempfile import TemporaryDirectory
+from textwrap import dedent
 from typing import Any
 
 from packaging.requirements import Requirement
@@ -103,6 +105,7 @@ def main(args: list[str] | None = None) -> int:
     dependencies = _requirements(pyproject["project"].get("dependencies", []))
 
     package_paths = []
+    package_names = []
     for dependency in dependencies:
         for package in installed[dependency]:
             package_path = Path(import_module(package).__file__)
@@ -110,83 +113,102 @@ def main(args: list[str] | None = None) -> int:
                 package_path = package_path.parent
             if not package_path.name.startswith("_"):
                 package_paths.append(str(package_path))
+                package_names.append(package)
+
+    packages = sorted(set(package_names))
+    nav = ",\n                ".join(
+        f"{{ {json.dumps(package)} = {json.dumps(f'{package}.md')} }}" for package in packages
+    )
 
     with TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
         tmpdir.joinpath("docs").mkdir()
-        config = f"""
-            site_name: API docs
-            theme:
-              name: material
-              features:
-              - announce.dismiss
-              - content.action.edit
-              - content.action.view
-              - content.code.annotate
-              - content.code.copy
-              - content.tooltips
-              - navigation.expand
-              - navigation.footer
-              - navigation.indexes
-              - navigation.instant.preview
-              - navigation.path
-              - navigation.top
-              - search.highlight
-              - search.suggest
-              - toc.follow
-              palette:
-              - media: "(prefers-color-scheme)"
-                toggle:
-                icon: material/brightness-auto
-                name: Switch to light mode
-              - media: "(prefers-color-scheme: light)"
-                scheme: default
-                primary: teal
-                accent: purple
-                toggle:
-                icon: material/weather-sunny
-                name: Switch to dark mode
-              - media: "(prefers-color-scheme: dark)"
-                scheme: slate
-                primary: black
-                accent: lime
-                toggle:
-                icon: material/weather-night
-                name: Switch to system preference
-            markdown_extensions:
-            - toc:
-                permalink: true
-            plugins:
-            - search
-            - autorefs
-            - mkdocstrings:
-                handlers:
-                  python:
-                    inventories:
-                    - https://docs.python.org/3/objects.inv
-                    options:
-                      backlinks: tree
-                      docstring_options:
-                        ignore_init_summary: true
-                      docstring_section_style: list
-                      filters: ["!^_"]
-                      heading_level: 1
-                      inherited_members: true
-                      merge_init_into_class: true
-                      separate_signature: true
-                      show_root_heading: true
-                      show_root_full_path: false
-                      show_signature_annotations: true
-                      show_source: true
-                      show_symbol_type_heading: true
-                      show_symbol_type_toc: true
-                      signature_crossrefs: true
-                      summary: true
-            - api-autonav:
-                nav_item_prefix: "<code class='doc-symbol doc-symbol-nav doc-symbol-module'></code> "
-                modules: ["{'", "'.join(package_paths)}"]
-        """
-        tmpdir.joinpath("mkdocs.yml").write_text(config)
-        run([sys.executable, "-m", "mkdocs", "serve"], cwd=tmpdir, check=False)
+        config = dedent(
+            f"""\
+            [project]
+            site_name = "API docs"
+            nav = [
+                {{ "API docs" = [
+                    {{ "Overview" = "index.md" }},
+                    {nav}
+                ] }},
+            ]
+
+            [project.theme]
+            features = [
+                "announce.dismiss",
+                "content.action.edit",
+                "content.action.view",
+                "content.code.annotate",
+                "content.code.copy",
+                "content.tooltips",
+                "navigation.expand",
+                "navigation.footer",
+                "navigation.indexes",
+                "navigation.instant.preview",
+                "navigation.path",
+                "navigation.top",
+                "search.highlight",
+                "search.suggest",
+                "toc.follow",
+            ]
+
+            [[project.theme.palette]]
+            media = "(prefers-color-scheme)"
+            toggle.icon = "material/brightness-auto"
+            toggle.name = "Switch to light mode"
+
+            [[project.theme.palette]]
+            media = "(prefers-color-scheme: light)"
+            scheme = "default"
+            primary = "teal"
+            accent = "purple"
+            toggle.icon = "material/weather-sunny"
+            toggle.name = "Switch to dark mode"
+
+            [[project.theme.palette]]
+            media = "(prefers-color-scheme: dark)"
+            scheme = "slate"
+            primary = "black"
+            accent = "lime"
+            toggle.icon = "material/weather-night"
+            toggle.name = "Switch to system preference"
+
+            [project.markdown_extensions.toc]
+            permalink = true
+
+            [project.plugins.mkdocstrings.handlers.python]
+            inventories = ["https://docs.python.org/3/objects.inv"]
+            paths = {json.dumps(sorted(set(package_paths)))}
+
+            [project.plugins.mkdocstrings.handlers.python.options]
+            docstring_options = {{ per_style_options = {{ google = {{ ignore_init_summary = true }}, numpy = {{ ignore_init_summary = true }} }} }}
+            docstring_section_style = "list"
+            docstring_style = "auto"
+            filters = "public"
+            heading_level = 1
+            inherited_members = true
+            merge_init_into_class = true
+            separate_signature = true
+            show_root_heading = true
+            show_root_full_path = false
+            show_signature_annotations = true
+            show_source = true
+            show_submodules = true
+            show_symbol_type_heading = true
+            show_symbol_type_toc = true
+            signature_crossrefs = true
+            summary = true
+            """,
+        )
+        tmpdir.joinpath("zensical.toml").write_text(config)
+        tmpdir.joinpath("docs", "index.md").write_text(
+            "# API docs\n\nSelect a package from the navigation to view its API reference.\n",
+        )
+        for package in packages:
+            tmpdir.joinpath("docs", f"{package}.md").write_text(
+                f"---\ntitle: {package}\n---\n\n::: {package}\n",
+            )
+        run([sys.executable, "-m", "zensical", "serve"], cwd=tmpdir, check=False)
 
     return 0

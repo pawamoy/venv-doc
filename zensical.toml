@@ -155,9 +155,6 @@ alternate_style = true
 [project.markdown_extensions.pymdownx.tasklist]
 custom_checkbox = true
 [project.markdown_extensions.pymdownx.tilde]
-[project.markdown_extensions.zensical.extensions.preview]
-configurations = [{targets.include = ["reference/api.md"]}]
-
 # ----------------------------------------------------------------------------
 # Plugins configuration
 # ----------------------------------------------------------------------------
@@ -167,8 +164,9 @@ inventories = ["https://docs.python.org/3/objects.inv"]
 
 [project.plugins.mkdocstrings.handlers.python.options]
 backlinks = "tree"
-docstring_options = { "ignore_init_summary" = true }
+docstring_options = { "per_style_options" = { "google" = { "ignore_init_summary" = true }, "numpy" = { "ignore_init_summary" = true } } }
 docstring_section_style = "list"
+docstring_style = "auto"
 filters = "public"
 heading_level = 1
 inherited_members = true
