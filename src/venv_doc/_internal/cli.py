@@ -44,6 +44,12 @@ from packaging.requirements import Requirement
 
 from venv_doc._internal import debug
 
+# YORE: EOL 3.10: Replace block with line 2.
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
 
 class _DebugInfo(argparse.Action):
     def __init__(self, nargs: int | str | None = 0, **kwargs: Any) -> None:
@@ -74,7 +80,7 @@ def _requirements(deps: list[str]) -> dict[str, Requirement]:
     return {_norm_name((req := Requirement(dep)).name): req for dep in deps}
 
 
-def main(args: list[str] | None = None) -> int:
+def main(args: list[str] | None = None) -> int:  # noqa: ARG001
     """Run the main program.
 
     This function is executed when you type `venv-doc` or `python -m venv_doc`.
@@ -85,15 +91,6 @@ def main(args: list[str] | None = None) -> int:
     Returns:
         An exit code.
     """
-    parser = get_parser()
-    opts = parser.parse_args(args=args)
-
-    # YORE: EOL 3.10: Replace block with line 2.
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:
-        import tomli as tomllib
-
     installed = defaultdict(list)
     for pkg, dists in metadata.packages_distributions().items():
         for dist in dists:
@@ -108,12 +105,17 @@ def main(args: list[str] | None = None) -> int:
     package_names = []
     for dependency in dependencies:
         for package in installed[dependency]:
-            package_path = Path(import_module(package).__file__)
-            if package_path.is_file():
-                package_path = package_path.parent
-            if not package_path.name.startswith("_"):
-                package_paths.append(str(package_path))
-                package_names.append(package)
+            module = import_module(package)
+            module_path = module.__file__
+            if module_path:
+                package_path = Path(module_path)
+                if package_path.is_file():
+                    package_path = package_path.parent
+                if not package_path.name.startswith("_"):
+                    package_paths.append(str(package_path))
+                    package_names.append(package)
+            else:
+                print(f"Warning: {package} has no __file__ attribute")
 
     packages = sorted(set(package_names))
     nav = ",\n                ".join(
@@ -121,8 +123,8 @@ def main(args: list[str] | None = None) -> int:
     )
 
     with TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-        tmpdir.joinpath("docs").mkdir()
+        tmppath = Path(tmpdir)
+        tmppath.joinpath("docs").mkdir()
         config = dedent(
             f"""\
             [project]
@@ -201,14 +203,14 @@ def main(args: list[str] | None = None) -> int:
             summary = true
             """,
         )
-        tmpdir.joinpath("zensical.toml").write_text(config)
-        tmpdir.joinpath("docs", "index.md").write_text(
+        tmppath.joinpath("zensical.toml").write_text(config)
+        tmppath.joinpath("docs", "index.md").write_text(
             "# API docs\n\nSelect a package from the navigation to view its API reference.\n",
         )
         for package in packages:
-            tmpdir.joinpath("docs", f"{package}.md").write_text(
+            tmppath.joinpath("docs", f"{package}.md").write_text(
                 f"---\ntitle: {package}\n---\n\n::: {package}\n",
             )
-        run([sys.executable, "-m", "zensical", "serve"], cwd=tmpdir, check=False)
+        run([sys.executable, "-m", "zensical", "serve"], cwd=tmppath, check=False)
 
     return 0
