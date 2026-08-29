@@ -20,15 +20,168 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+from typing import cast
+
+import mkdocstrings_handlers
 import pytest
+from markdown import Markdown
+from mkdocstrings_handlers.python import PythonHandler
+from zensical.compat import mkdocstrings as zensical_mkdocstrings
+from zensical.config import parse_config
 
 from venv_doc import main
 from venv_doc._internal import debug
+from venv_doc._internal.cli import _venv_packages, _venv_python
+from venv_doc._internal.sphinx_roles import _SphinxRolesExtension
 
 
-def test_main() -> None:
-    """Basic CLI test."""
+def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Generate module pages without starting a web server."""
+    generated = {}
+    discovered_pythons = []
+
+    def _serve(config_path: str, options: dict) -> None:
+        root = Path(config_path).parent
+        generated["config"] = Path(config_path).read_text()
+        generated["pages"] = {
+            page.name: page.read_text() for page in root.joinpath("docs").glob("*.md")
+        }
+        config = parse_config(config_path)
+        html = Markdown(
+            extensions=config["markdown_extensions"],
+            extension_configs=config["mdx_configs"],
+        ).convert(":class:`mkdocstrings_handlers.python.PythonHandler`")
+        assert html == (
+            '<p><autoref identifier="mkdocstrings_handlers.python.PythonHandler">'
+            "mkdocstrings_handlers.python.PythonHandler</autoref></p>"
+        )
+        zensical_mkdocstrings.get_mkdocstrings_extension(
+            **config["plugins"]["mkdocstrings"]["config"],
+            config=config,
+        )
+        handlers = zensical_mkdocstrings.HANDLERS
+        assert handlers is not None
+        python_handler = cast(PythonHandler, handlers.get_handler("python"))
+        assert python_handler._modules_collection[
+            "mkdocstrings_handlers.python"
+        ].is_module
+
+    monkeypatch.setattr("venv_doc._internal.cli.serve", _serve)
+    monkeypatch.setattr(
+        "venv_doc._internal.cli._venv_packages",
+        lambda python: (
+            discovered_pythons.append(python)
+            or (
+                ["mkdocstrings_handlers"],
+                [str(Path(mkdocstrings_handlers.__path__[0]).parent)],
+            )
+        ),
+    )
     assert main([]) == 0
+    assert discovered_pythons == [Path(".venv/bin/python")]
+    assert "mkdocstrings_handlers.md" in generated["pages"]
+    assert "mkdocstrings_handlers.python.md" in generated["pages"]
+    assert (
+        "show_submodules: false"
+        in generated["pages"]["mkdocstrings_handlers.python.md"]
+    )
+
+    assert '"mkdocstrings_handlers" = [' in generated["config"]
+    assert '"mkdocstrings_handlers.md",' in generated["config"]
+    assert "pycon = {}" in generated["config"]
+    assert (
+        '"venv_doc._internal.sphinx_roles:_SphinxRolesExtension" = {}'
+        in generated["config"]
+    )
+    assert '"Overview"' not in generated["config"]
+    assert '"navigation.expand"' not in generated["config"]
+    assert (
+        '"mkdocstrings_handlers.python" = "mkdocstrings_handlers.python.md"'
+        in generated["config"]
+    )
+
+
+def test_self(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use venv-doc's own interpreter when requested."""
+    discovered_pythons = []
+    monkeypatch.setattr(
+        "venv_doc._internal.cli._venv_packages",
+        lambda python: discovered_pythons.append(python) or ([], []),
+    )
+    monkeypatch.setattr("venv_doc._internal.cli.serve", lambda *args: None)
+
+    assert main(["--self"]) == 0
+    assert discovered_pythons == [Path(sys.executable)]
+
+
+def test_venv_packages() -> None:
+    """Read importable packages from another virtual environment."""
+    packages, paths = _venv_packages(_venv_python(Path(".venv")))
+
+    assert "mkdocstrings_handlers" in packages
+    assert str(Path(mkdocstrings_handlers.__path__[0]).parent) in paths
+
+
+def test_sphinx_roles_extension() -> None:
+    """Convert all supported Python-domain roles into mkdocs-autorefs markers."""
+    html = Markdown(extensions=[_SphinxRolesExtension()]).convert(
+        " ".join(
+            f":{role}:`package.symbol`"
+            for role in (
+                "attr",
+                "class",
+                "const",
+                "data",
+                "deco",
+                "exc",
+                "func",
+                "meth",
+                "mod",
+                "obj",
+                "type",
+            )
+        )
+    )
+
+    assert html == (
+        '<p><autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">@package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref> '
+        '<autoref identifier="package.symbol">package.symbol</autoref></p>'
+    )
+
+
+def test_sphinx_roles_extension_supports_qualified_roles_and_modifiers() -> None:
+    """Convert qualified roles and apply Sphinx cross-reference modifiers."""
+    html = Markdown(extensions=[_SphinxRolesExtension()]).convert(
+        ":py:meth:`~package.Class.method` and "
+        ":py:class:`a title <package.Class>` and "
+        ":func:`.package.function()` and "
+        ":py:func:`!package.function`"
+    )
+
+    assert html == (
+        '<p><autoref identifier="package.Class.method">method</autoref> and '
+        '<autoref identifier="package.Class">a title</autoref> and '
+        '<autoref identifier="package.function">package.function()</autoref> and '
+        "<code>package.function</code></p>"
+    )
+
+
+def test_sphinx_roles_extension_leaves_non_python_roles_unchanged() -> None:
+    """Do not alter roles outside the Python domain."""
+    html = Markdown(extensions=[_SphinxRolesExtension()]).convert(":ref:`some-label`")
+
+    assert html == "<p>:ref:<code>some-label</code></p>"
 
 
 def test_show_help(capsys: pytest.CaptureFixture) -> None:

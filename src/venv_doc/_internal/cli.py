@@ -31,24 +31,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
-from collections import defaultdict
-from importlib import import_module, metadata
 from pathlib import Path
 from subprocess import run
 from tempfile import TemporaryDirectory
 from textwrap import dedent
-from typing import Any
+from typing import Any, cast
 
-from packaging.requirements import Requirement
+from griffe import AliasResolutionError, Module
+from zensical import serve
+from zensical.compat import mkdocstrings as zensical_mkdocstrings
+from zensical.config import parse_config
 
 from venv_doc._internal import debug
-
-# YORE: EOL 3.10: Replace block with line 2.
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 
 class _DebugInfo(argparse.Action):
@@ -67,20 +63,108 @@ def get_parser() -> argparse.ArgumentParser:
         An argparse parser.
     """
     parser = argparse.ArgumentParser(prog="venv-doc")
-    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {debug._get_version()}")
-    parser.add_argument("--debug-info", action=_DebugInfo, help="Print debug information.")
+    parser.add_argument(
+        "-V", "--version", action="version", version=f"%(prog)s {debug._get_version()}"
+    )
+    parser.add_argument(
+        "--debug-info", action=_DebugInfo, help="Print debug information."
+    )
+    parser.add_argument(
+        "--self",
+        action="store_true",
+        help="Document packages from the environment running venv-doc instead of .venv.",
+    )
     return parser
 
 
-def _norm_name(name: str) -> str:
-    return name.replace("_", "-").replace(".", "-").lower()
+_VENV_INFO_SCRIPT = """\
+import json
+from importlib.metadata import packages_distributions
+from importlib.util import find_spec
+from pathlib import Path
+
+package_names = []
+package_paths = set()
+for package in packages_distributions():
+    if package.startswith("_") or not package.isidentifier():
+        continue
+    spec = find_spec(package)
+    if spec is None:
+        continue
+    package_names.append(package)
+    if spec.submodule_search_locations:
+        package_paths.update(str(Path(path).parent) for path in spec.submodule_search_locations)
+    elif spec.origin:
+        package_paths.add(str(Path(spec.origin).parent))
+
+print(json.dumps({"packages": sorted(package_names), "paths": sorted(package_paths)}))
+"""
 
 
-def _requirements(deps: list[str]) -> dict[str, Requirement]:
-    return {_norm_name((req := Requirement(dep)).name): req for dep in deps}
+def _venv_python(venv_path: Path) -> Path:
+    """Return the Python interpreter in a virtual environment."""
+    candidates = (
+        (venv_path / "Scripts" / "python.exe", venv_path / "Scripts" / "python")
+        if os.name == "nt"
+        else (venv_path / "bin" / "python",)
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    msg = f"Could not find a Python interpreter in {venv_path}"
+    raise FileNotFoundError(msg)
 
 
-def main(args: list[str] | None = None) -> int:  # noqa: ARG001
+def _venv_packages(python: Path) -> tuple[list[str], list[str]]:
+    """Return public packages and their import roots from a Python interpreter."""
+    result = run(
+        [str(python), "-c", _VENV_INFO_SCRIPT],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    info = json.loads(result.stdout)
+    return info["packages"], info["paths"]
+
+
+def _public_modules(module: Module) -> list[Module]:
+    """Return the public modules below a module, in declaration order."""
+    modules = []
+    for member in module.members.values():
+        if member.is_alias:
+            continue
+        try:
+            if not member.is_module or not member.is_public:
+                continue
+        except AliasResolutionError:
+            continue
+        public_module = cast(Module, member)
+        modules.append(public_module)
+        modules.extend(_public_modules(public_module))
+    return modules
+
+
+def _write_page(path: Path, identifier: str) -> None:
+    """Write an API documentation page for an identifier."""
+    path.write_text(
+        f"---\ntitle: {identifier}\n---\n\n::: {identifier}\n    options:\n        show_submodules: false\n",
+    )
+
+
+def _get_python_handler(config_path: Path) -> Any:
+    """Return Zensical's shared Python handler for a documentation build."""
+    config = parse_config(str(config_path))
+    zensical_mkdocstrings.reset()
+    zensical_mkdocstrings.get_mkdocstrings_extension(
+        **config["plugins"]["mkdocstrings"]["config"],
+        config=config,
+    )
+    handlers = zensical_mkdocstrings.HANDLERS
+    assert handlers is not None
+    return handlers.get_handler("python")
+
+
+def main(args: list[str] | None = None) -> int:
     """Run the main program.
 
     This function is executed when you type `venv-doc` or `python -m venv_doc`.
@@ -91,36 +175,9 @@ def main(args: list[str] | None = None) -> int:  # noqa: ARG001
     Returns:
         An exit code.
     """
-    installed = defaultdict(list)
-    for pkg, dists in metadata.packages_distributions().items():
-        for dist in dists:
-            installed[dist].append(pkg)
-
-    project_dir = Path()
-    with project_dir.joinpath("pyproject.toml").open("rb") as pyproject_file:
-        pyproject = tomllib.load(pyproject_file)
-    dependencies = _requirements(pyproject["project"].get("dependencies", []))
-
-    package_paths = []
-    package_names = []
-    for dependency in dependencies:
-        for package in installed[dependency]:
-            module = import_module(package)
-            module_path = module.__file__
-            if module_path:
-                package_path = Path(module_path)
-                if package_path.is_file():
-                    package_path = package_path.parent
-                if not package_path.name.startswith("_"):
-                    package_paths.append(str(package_path))
-                    package_names.append(package)
-            else:
-                print(f"Warning: {package} has no __file__ attribute")
-
-    packages = sorted(set(package_names))
-    nav = ",\n                ".join(
-        f"{{ {json.dumps(package)} = {json.dumps(f'{package}.md')} }}" for package in packages
-    )
+    parsed_args = get_parser().parse_args(args)
+    python = Path(sys.executable) if parsed_args.self else _venv_python(Path(".venv"))
+    packages, package_paths = _venv_packages(python)
 
     with TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)
@@ -131,8 +188,8 @@ def main(args: list[str] | None = None) -> int:  # noqa: ARG001
             site_name = "API docs"
             nav = [
                 {{ "API docs" = [
-                    {{ "Overview" = "index.md" }},
-                    {nav}
+                    "index.md",
+                    # {{packages}}
                 ] }},
             ]
 
@@ -144,7 +201,6 @@ def main(args: list[str] | None = None) -> int:  # noqa: ARG001
                 "content.code.annotate",
                 "content.code.copy",
                 "content.tooltips",
-                "navigation.expand",
                 "navigation.footer",
                 "navigation.indexes",
                 "navigation.instant.preview",
@@ -179,9 +235,13 @@ def main(args: list[str] | None = None) -> int:  # noqa: ARG001
             [project.markdown_extensions.toc]
             permalink = true
 
+            [project.markdown_extensions]
+            pycon = {{}}
+            "venv_doc._internal.sphinx_roles:_SphinxRolesExtension" = {{}}
+
             [project.plugins.mkdocstrings.handlers.python]
             inventories = ["https://docs.python.org/3/objects.inv"]
-            paths = {json.dumps(sorted(set(package_paths)))}
+            paths = {json.dumps(package_paths)}
 
             [project.plugins.mkdocstrings.handlers.python.options]
             docstring_options = {{ per_style_options = {{ google = {{ ignore_init_summary = true }}, numpy = {{ ignore_init_summary = true }} }} }}
@@ -191,26 +251,48 @@ def main(args: list[str] | None = None) -> int:  # noqa: ARG001
             heading_level = 1
             inherited_members = true
             merge_init_into_class = true
+            scoped_crossrefs = false
             separate_signature = true
+            show_if_no_docstring = true
             show_root_heading = true
             show_root_full_path = false
             show_signature_annotations = true
             show_source = true
-            show_submodules = true
+            show_submodules = false
             show_symbol_type_heading = true
             show_symbol_type_toc = true
             signature_crossrefs = true
             summary = true
             """,
         )
-        tmppath.joinpath("zensical.toml").write_text(config)
+        config_path = tmppath.joinpath("zensical.toml")
+        config_path.write_text(config)
         tmppath.joinpath("docs", "index.md").write_text(
             "# API docs\n\nSelect a package from the navigation to view its API reference.\n",
         )
+        handler = _get_python_handler(config_path)
+        package_modules = {}
         for package in packages:
-            tmppath.joinpath("docs", f"{package}.md").write_text(
-                f"---\ntitle: {package}\n---\n\n::: {package}\n",
+            root_module = handler.collect(package, handler.get_options({}))
+            package_modules[package] = _public_modules(root_module)
+            _write_page(tmppath.joinpath("docs", f"{package}.md"), package)
+            for module in package_modules[package]:
+                _write_page(tmppath.joinpath("docs", f"{module.path}.md"), module.path)
+
+        nav = ",\n                    ".join(
+            "{ "
+            + json.dumps(package)
+            + " = [\n                        "
+            + json.dumps(f"{package}.md")
+            + ",\n                        "
+            + ",\n                        ".join(
+                f"{{ {json.dumps(module.path)} = {json.dumps(f'{module.path}.md')} }}"
+                for module in modules
             )
-        run([sys.executable, "-m", "zensical", "serve"], cwd=tmppath, check=False)
+            + "\n                    ] }"
+            for package, modules in package_modules.items()
+        )
+        config_path.write_text(config.replace("# {packages}", nav))
+        serve(str(config_path), {"dev_addr": None, "open": False, "strict": False})
 
     return 0
