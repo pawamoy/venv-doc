@@ -40,7 +40,7 @@ from textwrap import dedent
 from typing import Any, cast
 
 from griffe import AliasResolutionError, Module
-from zensical import serve
+from zensical import build, serve
 from zensical.compat import mkdocstrings as zensical_mkdocstrings
 from zensical.config import parse_config
 
@@ -73,6 +73,44 @@ def get_parser() -> argparse.ArgumentParser:
         "--self",
         action="store_true",
         help="Document packages from the environment running venv-doc instead of .venv.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    build_parser = subparsers.add_parser("build", help="Build the documentation.")
+    build_parser.add_argument(
+        "-c",
+        "--clean",
+        action="store_true",
+        help="Clean cache.",
+    )
+    build_parser.add_argument(
+        "-s",
+        "--strict",
+        action="store_true",
+        help="Enable strict mode - abort the build on warnings.",
+    )
+
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Build and serve the documentation.",
+    )
+    serve_parser.add_argument(
+        "-a",
+        "--dev-addr",
+        metavar="<IP:PORT>",
+        help="IP address and port (default: localhost:8000).",
+    )
+    serve_parser.add_argument(
+        "-o",
+        "--open",
+        action="store_true",
+        help="Open preview in default browser.",
+    )
+    serve_parser.add_argument(
+        "-s",
+        "--strict",
+        action="store_true",
+        help="Strict mode (currently unsupported).",
     )
     return parser
 
@@ -293,6 +331,19 @@ def main(args: list[str] | None = None) -> int:
             for package, modules in package_modules.items()
         )
         config_path.write_text(config.replace("# {packages}", nav))
-        serve(str(config_path), {"dev_addr": None, "open": False, "strict": False})
+        if parsed_args.command == "build":
+            build(
+                str(config_path),
+                {"clean": parsed_args.clean, "strict": parsed_args.strict},
+            )
+        else:
+            serve(
+                str(config_path),
+                {
+                    "dev_addr": parsed_args.dev_addr,
+                    "open": parsed_args.open,
+                    "strict": parsed_args.strict,
+                },
+            )
 
     return 0

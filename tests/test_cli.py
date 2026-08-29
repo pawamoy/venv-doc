@@ -45,6 +45,7 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
     def _serve(config_path: str, options: dict) -> None:
         root = Path(config_path).parent
         generated["config"] = Path(config_path).read_text()
+        generated["options"] = options
         generated["pages"] = {
             page.name: page.read_text() for page in root.joinpath("docs").glob("*.md")
         }
@@ -79,8 +80,15 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         ),
     )
-    assert main([]) == 0
+    assert main(
+        ["serve", "--dev-addr", "127.0.0.1:9000", "--open", "--strict"]
+    ) == 0
     assert discovered_pythons == [Path(".venv/bin/python")]
+    assert generated["options"] == {
+        "dev_addr": "127.0.0.1:9000",
+        "open": True,
+        "strict": True,
+    }
     assert "mkdocstrings_handlers.md" in generated["pages"]
     assert "mkdocstrings_handlers.python.md" in generated["pages"]
     assert (
@@ -112,8 +120,27 @@ def test_self(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr("venv_doc._internal.cli.serve", lambda *args: None)
 
-    assert main(["--self"]) == 0
+    assert main(["--self", "serve"]) == 0
     assert discovered_pythons == [Path(sys.executable)]
+
+
+def test_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build generated documentation with the requested options."""
+    built = {}
+
+    def _build(config_path: str, options: dict) -> None:
+        built["config"] = Path(config_path).read_text()
+        built["options"] = options
+
+    monkeypatch.setattr("venv_doc._internal.cli.build", _build)
+    monkeypatch.setattr(
+        "venv_doc._internal.cli._venv_packages",
+        lambda python: ([], []),
+    )
+
+    assert main(["build", "--clean", "--strict"]) == 0
+    assert "site_name = \"API docs\"" in built["config"]
+    assert built["options"] == {"clean": True, "strict": True}
 
 
 def test_venv_packages() -> None:
