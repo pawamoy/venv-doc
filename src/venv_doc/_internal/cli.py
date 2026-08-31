@@ -37,9 +37,10 @@ from pathlib import Path
 from subprocess import run
 from tempfile import TemporaryDirectory
 from textwrap import dedent
+from time import perf_counter
 from typing import Any, cast
 
-from griffe import AliasResolutionError, Module
+from griffe import Alias, AliasResolutionError, CyclicAliasError, Module, Object
 from zensical import build, serve
 from zensical.compat import mkdocstrings as zensical_mkdocstrings
 from zensical.config import parse_config
@@ -182,6 +183,50 @@ def _public_modules(module: Module) -> list[Module]:
     return modules
 
 
+def _is_rendered_member(member: Object | Alias) -> bool:
+    """Whether a member is rendered with the generated configuration."""
+    try:
+        return member.is_public
+    except (AliasResolutionError, CyclicAliasError):
+        return False
+
+
+def _preparse_docstrings(modules: list[Module]) -> int:
+    """Pre-parse docstrings that will be rendered on module pages."""
+    objects: list[Object | Alias] = list(modules)
+    seen_objects: set[int] = set()
+    seen_docstrings: set[int] = set()
+    parsed = 0
+
+    while objects:
+        obj = objects.pop()
+        try:
+            target = obj.final_target if isinstance(obj, Alias) else obj
+        except (AliasResolutionError, CyclicAliasError):
+            continue
+
+        object_id = id(target)
+        if object_id in seen_objects:
+            continue
+        seen_objects.add(object_id)
+
+        if target.docstring is not None:
+            docstring_id = id(target.docstring)
+            if docstring_id not in seen_docstrings:
+                _ = target.docstring.parsed
+                seen_docstrings.add(docstring_id)
+                parsed += 1
+
+        if target.is_module or target.is_class:
+            objects.extend(member for member in obj.all_members.values() if _is_rendered_member(member))
+
+    return parsed
+
+
+def _noop_mkdocstrings_reset() -> None:
+    """Keep the pre-loaded mkdocstrings handlers alive."""
+
+
 def _write_page(path: Path, identifier: str) -> None:
     """Write an API documentation page for an identifier."""
     path.write_text(
@@ -230,6 +275,7 @@ def main(args: list[str] | None = None) -> int:
                     # {{packages}}
                 ] }},
             ]
+            validation = false
 
             [project.theme]
             features = [
@@ -282,7 +328,13 @@ def main(args: list[str] | None = None) -> int:
             paths = {json.dumps(package_paths)}
 
             [project.plugins.mkdocstrings.handlers.python.options]
-            docstring_options = {{ per_style_options = {{ google = {{ ignore_init_summary = true }}, numpy = {{ ignore_init_summary = true }} }} }}
+            docstring_options = {{
+                per_style_options = {{
+                    google = {{ warnings = false, ignore_init_summary = true }},
+                    numpy = {{ warnings = false, ignore_init_summary = true }},
+                    sphinx = {{ warnings = false }},
+                }}
+            }}
             docstring_section_style = "list"
             docstring_style = "auto"
             filters = "public"
@@ -310,9 +362,12 @@ def main(args: list[str] | None = None) -> int:
         )
         handler = _get_python_handler(config_path)
         package_modules = {}
+        documented_modules = []
         for package in packages:
             root_module = handler.collect(package, handler.get_options({}))
             package_modules[package] = _public_modules(root_module)
+            documented_modules.append(root_module)
+            documented_modules.extend(package_modules[package])
             _write_page(tmppath.joinpath("docs", f"{package}.md"), package)
             for module in package_modules[package]:
                 _write_page(tmppath.joinpath("docs", f"{module.path}.md"), module.path)
@@ -331,19 +386,27 @@ def main(args: list[str] | None = None) -> int:
             for package, modules in package_modules.items()
         )
         config_path.write_text(config.replace("# {packages}", nav))
-        if parsed_args.command == "build":
-            build(
-                str(config_path),
-                {"clean": parsed_args.clean, "strict": parsed_args.strict},
-            )
-        else:
-            serve(
-                str(config_path),
-                {
-                    "dev_addr": parsed_args.dev_addr,
-                    "open": parsed_args.open,
-                    "strict": parsed_args.strict,
-                },
-            )
+        started = perf_counter()
+        parsed_docstrings = _preparse_docstrings(documented_modules)
+        print(f"Pre-parsed {parsed_docstrings:,} docstrings in {perf_counter() - started:.2f}s", flush=True)
+        reset_mkdocstrings = zensical_mkdocstrings.reset
+        zensical_mkdocstrings.reset = _noop_mkdocstrings_reset  # ty: ignore[invalid-assignment]
+        try:
+            if parsed_args.command == "build":
+                build(
+                    str(config_path),
+                    {"clean": parsed_args.clean, "strict": parsed_args.strict},
+                )
+            else:
+                serve(
+                    str(config_path),
+                    {
+                        "dev_addr": parsed_args.dev_addr,
+                        "open": parsed_args.open,
+                        "strict": parsed_args.strict,
+                    },
+                )
+        finally:
+            zensical_mkdocstrings.reset = reset_mkdocstrings
 
     return 0

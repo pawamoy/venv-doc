@@ -26,6 +26,7 @@ from typing import cast
 
 import mkdocstrings_handlers
 import pytest
+from griffe import Class, Docstring, Function, Module
 from markdown import Markdown
 from mkdocstrings_handlers.python import PythonHandler
 from zensical.compat import mkdocstrings as zensical_mkdocstrings
@@ -33,7 +34,7 @@ from zensical.config import parse_config
 
 from venv_doc import main
 from venv_doc._internal import debug
-from venv_doc._internal.cli import _venv_packages, _venv_python
+from venv_doc._internal.cli import _preparse_docstrings, _venv_packages, _venv_python
 from venv_doc._internal.sphinx_roles import _SphinxRolesExtension
 
 
@@ -41,6 +42,7 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
     """Generate module pages without starting a web server."""
     generated = {}
     discovered_pythons = []
+    reset_mkdocstrings = zensical_mkdocstrings.reset
 
     def _serve(config_path: str, options: dict) -> None:
         root = Path(config_path).parent
@@ -58,12 +60,14 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
             '<p><autoref identifier="mkdocstrings_handlers.python.PythonHandler">'
             "mkdocstrings_handlers.python.PythonHandler</autoref></p>"
         )
+        handlers = zensical_mkdocstrings.HANDLERS
+        assert handlers is not None
+        zensical_mkdocstrings.reset()
+        assert zensical_mkdocstrings.HANDLERS is handlers
         zensical_mkdocstrings.get_mkdocstrings_extension(
             **config["plugins"]["mkdocstrings"]["config"],
             config=config,
         )
-        handlers = zensical_mkdocstrings.HANDLERS
-        assert handlers is not None
         python_handler = cast(PythonHandler, handlers.get_handler("python"))
         assert python_handler._modules_collection[
             "mkdocstrings_handlers.python"
@@ -83,6 +87,7 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
     assert main(
         ["serve", "--dev-addr", "127.0.0.1:9000", "--open", "--strict"]
     ) == 0
+    assert zensical_mkdocstrings.reset is reset_mkdocstrings
     assert discovered_pythons == [Path(".venv/bin/python")]
     assert generated["options"] == {
         "dev_addr": "127.0.0.1:9000",
@@ -141,6 +146,25 @@ def test_build(monkeypatch: pytest.MonkeyPatch) -> None:
     assert main(["build", "--clean", "--strict"]) == 0
     assert "site_name = \"API docs\"" in built["config"]
     assert built["options"] == {"clean": True, "strict": True}
+
+
+def test_preparse_docstrings() -> None:
+    """Parse and cache only docstrings rendered by the generated pages."""
+    module_docstring = Docstring("Module documentation.")
+    class_docstring = Docstring("Class documentation.")
+    method_docstring = Docstring("Method documentation.")
+    private_docstring = Docstring("Private documentation.")
+    module = Module("package", docstring=module_docstring)
+    public_class = Class("Public", docstring=class_docstring)
+    public_class.set_member("method", Function("method", docstring=method_docstring))
+    module.set_member("Public", public_class)
+    module.set_member("_private", Function("_private", docstring=private_docstring))
+
+    assert _preparse_docstrings([module, module]) == 3
+    assert "parsed" in module_docstring.__dict__
+    assert "parsed" in class_docstring.__dict__
+    assert "parsed" in method_docstring.__dict__
+    assert "parsed" not in private_docstring.__dict__
 
 
 def test_venv_packages() -> None:
