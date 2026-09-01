@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from subprocess import run
 from tempfile import TemporaryDirectory
@@ -40,7 +41,17 @@ from textwrap import dedent
 from time import perf_counter
 from typing import Any, cast
 
-from griffe import Alias, AliasResolutionError, CyclicAliasError, Module, Object
+from griffe import (
+    Alias,
+    AliasResolutionError,
+    CyclicAliasError,
+    GriffeLoader,
+    Module,
+    Object,
+    Parser,
+    load_extensions,
+)
+from mkdocstrings import CollectionError
 from zensical import build, serve
 from zensical.compat import mkdocstrings as zensical_mkdocstrings
 from zensical.config import parse_config
@@ -247,6 +258,56 @@ def _get_python_handler(config_path: Path) -> Any:
     return handlers.get_handler("python")
 
 
+def _load_packages(handler: Any, packages: list[str]) -> dict[str, Module]:
+    """Load packages into a Python handler's shared Griffe collections."""
+    options = handler.get_options({})
+    parser = Parser(options.docstring_style) if options.docstring_style else None
+    parser_options = (
+        asdict(options.docstring_options)
+        if options.docstring_options is not None
+        else None
+    )
+
+    extensions = handler.normalize_extension_paths(options.extensions)
+    loader = GriffeLoader(
+        extensions=load_extensions(*extensions),
+        search_paths=handler._paths,
+        docstring_parser=parser,
+        docstring_options=parser_options,  # ty: ignore[invalid-argument-type]
+        modules_collection=handler._modules_collection,
+        lines_collection=handler._lines_collection,
+        allow_inspection=options.allow_inspection,
+        force_inspection=options.force_inspection,
+    )
+
+    root_modules = {}
+    try:
+        for module in options.preload_modules:
+            if module not in handler._modules_collection:
+                loader.load(
+                    module,
+                    try_relative_path=False,
+                    find_stubs_package=options.find_stubs_package,
+                )
+
+        for package in packages:
+            if package not in handler._modules_collection:
+                loader.load(
+                    package,
+                    try_relative_path=False,
+                    find_stubs_package=options.find_stubs_package,
+                )
+            root_modules[package] = cast(Module, handler._modules_collection[package])
+    except ImportError as error:
+        raise CollectionError(str(error)) from error
+
+    loader.resolve_aliases(
+        implicit=False,
+        external=handler.config.load_external_modules,
+    )
+    return root_modules
+
+
 def main(args: list[str] | None = None) -> int:
     """Run the main program.
 
@@ -361,10 +422,10 @@ def main(args: list[str] | None = None) -> int:
             "# API docs\n\nSelect a package from the navigation to view its API reference.\n",
         )
         handler = _get_python_handler(config_path)
+        root_modules = _load_packages(handler, packages)
         package_modules = {}
         documented_modules = []
-        for package in packages:
-            root_module = handler.collect(package, handler.get_options({}))
+        for package, root_module in root_modules.items():
             package_modules[package] = _public_modules(root_module)
             documented_modules.append(root_module)
             documented_modules.extend(package_modules[package])

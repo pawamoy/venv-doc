@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import mkdocstrings_handlers
@@ -34,7 +35,12 @@ from zensical.config import parse_config
 
 from venv_doc import main
 from venv_doc._internal import debug
-from venv_doc._internal.cli import _preparse_docstrings, _venv_packages, _venv_python
+from venv_doc._internal.cli import (
+    _load_packages,
+    _preparse_docstrings,
+    _venv_packages,
+    _venv_python,
+)
 from venv_doc._internal.sphinx_roles import _SphinxRolesExtension
 
 
@@ -146,6 +152,81 @@ def test_build(monkeypatch: pytest.MonkeyPatch) -> None:
     assert main(["build", "--clean", "--strict"]) == 0
     assert "site_name = \"API docs\"" in built["config"]
     assert built["options"] == {"clean": True, "strict": True}
+
+
+def test_load_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Load all packages into shared collections before resolving aliases once."""
+    modules = {}
+    lines = object()
+    loaded = []
+    resolved = []
+    loader_options = {}
+    extensions = object()
+    configured_extensions = []
+    options = SimpleNamespace(
+        allow_inspection=True,
+        docstring_options=None,
+        docstring_style=None,
+        extensions=["extension"],
+        find_stubs_package=True,
+        force_inspection=False,
+        preload_modules=["preloaded"],
+    )
+    handler = SimpleNamespace(
+        _lines_collection=lines,
+        _modules_collection=modules,
+        _paths=["search-path"],
+        config=SimpleNamespace(load_external_modules=True),
+        get_options=lambda local_options: options,
+        normalize_extension_paths=lambda configured: ["normalized-extension"],
+    )
+
+    class _Loader:
+        def __init__(self, **kwargs: object) -> None:
+            loader_options.update(kwargs)
+
+        def load(self, package: str, **kwargs: object) -> Module:
+            loaded.append((package, kwargs))
+            module = Module(package)
+            modules[package] = module
+            return module
+
+        def resolve_aliases(self, **kwargs: object) -> tuple[set[str], int]:
+            resolved.append(kwargs)
+            return set(), 1
+
+    monkeypatch.setattr("venv_doc._internal.cli.GriffeLoader", _Loader)
+
+    def _load_extensions(*configured: object) -> object:
+        configured_extensions.append(configured)
+        return extensions
+
+    monkeypatch.setattr(
+        "venv_doc._internal.cli.load_extensions",
+        _load_extensions,
+    )
+
+    root_modules = _load_packages(handler, ["package_a", "package_b"])
+
+    assert list(root_modules) == ["package_a", "package_b"]
+    assert root_modules["package_a"] is modules["package_a"]
+    assert configured_extensions == [("normalized-extension",)]
+    assert loaded == [
+        ("preloaded", {"try_relative_path": False, "find_stubs_package": True}),
+        ("package_a", {"try_relative_path": False, "find_stubs_package": True}),
+        ("package_b", {"try_relative_path": False, "find_stubs_package": True}),
+    ]
+    assert resolved == [{"implicit": False, "external": True}]
+    assert loader_options == {
+        "allow_inspection": True,
+        "docstring_options": None,
+        "docstring_parser": None,
+        "extensions": extensions,
+        "force_inspection": False,
+        "lines_collection": lines,
+        "modules_collection": modules,
+        "search_paths": ["search-path"],
+    }
 
 
 def test_preparse_docstrings() -> None:
