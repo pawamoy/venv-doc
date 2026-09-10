@@ -30,6 +30,7 @@ classifiers = [
 ]
 dependencies = [
     "griffe>=2.2",
+    "prune-source>=0.1",
     "markdown-pycon>=1.0",
     "mkdocstrings-python>=2.0",
     "zensical>=0.0.57",
