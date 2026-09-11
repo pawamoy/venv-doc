@@ -54,9 +54,7 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
         root = Path(config_path).parent
         generated["config"] = Path(config_path).read_text()
         generated["options"] = options
-        generated["pages"] = {
-            page.name: page.read_text() for page in root.joinpath("docs").glob("*.md")
-        }
+        generated["pages"] = {page.name: page.read_text() for page in root.joinpath("docs").glob("*.md")}
         config = parse_config(config_path)
         html = Markdown(
             extensions=config["markdown_extensions"],
@@ -74,10 +72,8 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
             **config["plugins"]["mkdocstrings"]["config"],
             config=config,
         )
-        python_handler = cast(PythonHandler, handlers.get_handler("python"))
-        assert python_handler._modules_collection[
-            "mkdocstrings_handlers.python"
-        ].is_module
+        python_handler = cast("PythonHandler", handlers.get_handler("python"))
+        assert python_handler._modules_collection["mkdocstrings_handlers.python"].is_module
 
     monkeypatch.setattr("venv_doc._internal.cli.serve", _serve)
     monkeypatch.setattr(
@@ -90,9 +86,12 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         ),
     )
-    assert main(
-        ["serve", "--dev-addr", "127.0.0.1:9000", "--open", "--strict"]
-    ) == 0
+    assert (
+        main(
+            ["serve", "--dev-addr", "127.0.0.1:9000", "--open", "--strict"],
+        )
+        == 0
+    )
     assert zensical_mkdocstrings.reset is reset_mkdocstrings
     assert discovered_pythons == [Path(".venv/bin/python")]
     assert generated["options"] == {
@@ -102,24 +101,15 @@ def test_main(monkeypatch: pytest.MonkeyPatch) -> None:
     }
     assert "mkdocstrings_handlers.md" in generated["pages"]
     assert "mkdocstrings_handlers.python.md" in generated["pages"]
-    assert (
-        "show_submodules: false"
-        in generated["pages"]["mkdocstrings_handlers.python.md"]
-    )
+    assert "show_submodules: false" in generated["pages"]["mkdocstrings_handlers.python.md"]
 
     assert '"mkdocstrings_handlers" = [' in generated["config"]
     assert '"mkdocstrings_handlers.md",' in generated["config"]
     assert "pycon = {}" in generated["config"]
-    assert (
-        '"venv_doc._internal.sphinx_roles:_SphinxRolesExtension" = {}'
-        in generated["config"]
-    )
+    assert '"venv_doc._internal.sphinx_roles:_SphinxRolesExtension" = {}' in generated["config"]
     assert '"Overview"' not in generated["config"]
     assert '"navigation.expand"' not in generated["config"]
-    assert (
-        '"mkdocstrings_handlers.python" = "mkdocstrings_handlers.python.md"'
-        in generated["config"]
-    )
+    assert '"mkdocstrings_handlers.python" = "mkdocstrings_handlers.python.md"' in generated["config"]
 
 
 def test_self(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -150,7 +140,7 @@ def test_build(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert main(["build", "--clean", "--strict"]) == 0
-    assert "site_name = \"API docs\"" in built["config"]
+    assert 'site_name = "API docs"' in built["config"]
     assert built["options"] == {"clean": True, "strict": True}
 
 
@@ -274,7 +264,7 @@ def test_sphinx_roles_extension() -> None:
                 "obj",
                 "type",
             )
-        )
+        ),
     )
 
     assert html == (
@@ -298,7 +288,7 @@ def test_sphinx_roles_extension_supports_qualified_roles_and_modifiers() -> None
         ":py:meth:`~package.Class.method` and "
         ":py:class:`a title <package.Class>` and "
         ":func:`.package.function()` and "
-        ":py:func:`!package.function`"
+        ":py:func:`!package.function`",
     )
 
     assert html == (

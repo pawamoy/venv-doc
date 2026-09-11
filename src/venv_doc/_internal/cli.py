@@ -76,10 +76,15 @@ def get_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(prog="venv-doc")
     parser.add_argument(
-        "-V", "--version", action="version", version=f"%(prog)s {debug._get_version()}"
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {debug._get_version()}",
     )
     parser.add_argument(
-        "--debug-info", action=_DebugInfo, help="Print debug information."
+        "--debug-info",
+        action=_DebugInfo,
+        help="Print debug information.",
     )
     parser.add_argument(
         "--self",
@@ -188,7 +193,7 @@ def _public_modules(module: Module) -> list[Module]:
                 continue
         except AliasResolutionError:
             continue
-        public_module = cast(Module, member)
+        public_module = cast("Module", member)
         modules.append(public_module)
         modules.extend(_public_modules(public_module))
     return modules
@@ -262,11 +267,7 @@ def _load_packages(handler: Any, packages: list[str]) -> dict[str, Module]:
     """Load packages into a Python handler's shared Griffe collections."""
     options = handler.get_options({})
     parser = Parser(options.docstring_style) if options.docstring_style else None
-    parser_options = (
-        asdict(options.docstring_options)
-        if options.docstring_options is not None
-        else None
-    )
+    parser_options = asdict(options.docstring_options) if options.docstring_options is not None else None
 
     extensions = handler.normalize_extension_paths(options.extensions)
     loader = GriffeLoader(
@@ -297,7 +298,7 @@ def _load_packages(handler: Any, packages: list[str]) -> dict[str, Module]:
                     try_relative_path=False,
                     find_stubs_package=options.find_stubs_package,
                 )
-            root_modules[package] = cast(Module, handler._modules_collection[package])
+            root_modules[package] = cast("Module", handler._modules_collection[package])
     except ImportError as error:
         raise CollectionError(str(error)) from error
 
@@ -440,8 +441,7 @@ def main(args: list[str] | None = None) -> int:
             + json.dumps(f"{package}.md")
             + ",\n                        "
             + ",\n                        ".join(
-                f"{{ {json.dumps(module.path)} = {json.dumps(f'{module.path}.md')} }}"
-                for module in modules
+                f"{{ {json.dumps(module.path)} = {json.dumps(f'{module.path}.md')} }}" for module in modules
             )
             + "\n                    ] }"
             for package, modules in package_modules.items()

@@ -33,9 +33,7 @@ if TYPE_CHECKING:
 _PYTHON_ROLES = "attr|class|const|data|deco|exc|func|meth|mod|obj|type"
 """Python-domain cross-reference roles supported by Sphinx."""
 
-_SPHINX_ROLE_RE = (
-    rf"(?<![\w`]):(?:py:)?(?P<role>{_PYTHON_ROLES}):`(?P<content>[^`\n]+)`(?!`)"
-)
+_SPHINX_ROLE_RE = rf"(?<![\w`]):(?:py:)?(?P<role>{_PYTHON_ROLES}):`(?P<content>[^`\n]+)`(?!`)"
 """Match a supported short or qualified Python-domain Sphinx role."""
 
 _PYTHON_IDENTIFIER_RE = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
