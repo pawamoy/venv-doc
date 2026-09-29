@@ -241,11 +241,54 @@ def test_preparse_docstrings() -> None:
 
 
 def test_venv_packages() -> None:
-    """Read importable packages from another virtual environment."""
-    packages, paths = _venv_packages(_venv_python(Path(".venv")))
+    """Read importable packages and paths from the test's virtual environment."""
+    packages, paths = _venv_packages(_venv_python(Path(sys.prefix)))
 
     assert "mkdocstrings_handlers" in packages
     assert str(Path(mkdocstrings_handlers.__path__[0]).parent) in paths
+
+
+@pytest.mark.parametrize("declare_packages", [True, False])
+def test_venv_packages_from_distribution_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declare_packages: bool,
+) -> None:
+    """Discover packages from declared names or installed files."""
+    # Put a module, a regular package, and a namespace package in a distribution.
+    installed_files = (
+        "sample_module.py",
+        "sample_package/__init__.py",
+        "sample_namespace/member.py",
+        "_private_module.py",
+        "README.md",
+    )
+    for filename in installed_files:
+        path = tmp_path / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf8")
+
+    distribution = tmp_path / "sample-1.0.dist-info"
+    distribution.mkdir()
+    distribution.joinpath("METADATA").write_text("Name: sample\nVersion: 1.0\n", encoding="utf8")
+    distribution.joinpath("RECORD").write_text(
+        "".join(f"{filename},,\n" for filename in installed_files),
+        encoding="utf8",
+    )
+    if declare_packages:
+        distribution.joinpath("top_level.txt").write_text(
+            "sample_module\nsample_package\nsample_namespace\n_private_module\n",
+            encoding="utf8",
+        )
+
+    # Make the distribution visible to the child interpreter.
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    packages, paths = _venv_packages(Path(sys.executable))
+
+    assert {"sample_module", "sample_package", "sample_namespace"} <= set(packages)
+    assert "_private_module" not in packages
+    assert "README" not in packages
+    assert str(tmp_path) in paths
 
 
 def test_sphinx_roles_extension() -> None:

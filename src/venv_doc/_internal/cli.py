@@ -134,13 +134,24 @@ def get_parser() -> argparse.ArgumentParser:
 
 _VENV_INFO_SCRIPT = """\
 import json
-from importlib.metadata import packages_distributions
+from importlib.metadata import distributions
 from importlib.util import find_spec
+from inspect import getmodulename
 from pathlib import Path
+
+package_candidates = set()
+for distribution in distributions():
+    top_level = distribution.read_text("top_level.txt")
+    if top_level:
+        package_candidates.update(top_level.split())
+    else:
+        for path in distribution.files or []:
+            name = path.parts[0]
+            package_candidates.add(getmodulename(name) or name)
 
 package_names = []
 package_paths = set()
-for package in packages_distributions():
+for package in package_candidates:
     if package.startswith("_") or not package.isidentifier():
         continue
     spec = find_spec(package)
@@ -176,7 +187,7 @@ def _venv_packages(python: Path) -> tuple[list[str], list[str]]:
         [str(python), "-c", _VENV_INFO_SCRIPT],
         capture_output=True,
         check=True,
-        text=True,
+        encoding="utf8",
     )
     info = json.loads(result.stdout)
     return info["packages"], info["paths"]
@@ -247,6 +258,7 @@ def _write_page(path: Path, identifier: str) -> None:
     """Write an API documentation page for an identifier."""
     path.write_text(
         f"---\ntitle: {identifier}\n---\n\n::: {identifier}\n    options:\n        show_submodules: false\n",
+        encoding="utf8",
     )
 
 
@@ -417,9 +429,10 @@ def main(args: list[str] | None = None) -> int:
             """,
         )
         config_path = tmppath.joinpath("zensical.toml")
-        config_path.write_text(config)
+        config_path.write_text(config, encoding="utf8")
         tmppath.joinpath("docs", "index.md").write_text(
             "# API docs\n\nSelect a package from the navigation to view its API reference.\n",
+            encoding="utf8",
         )
         handler = _get_python_handler(config_path)
         root_modules = _load_packages(handler, packages)
@@ -445,12 +458,12 @@ def main(args: list[str] | None = None) -> int:
             + "\n                    ] }"
             for package, modules in package_modules.items()
         )
-        config_path.write_text(config.replace("# {packages}", nav))
+        config_path.write_text(config.replace("# {packages}", nav), encoding="utf8")
         started = perf_counter()
         parsed_docstrings = _preparse_docstrings(documented_modules)
         print(f"Pre-parsed {parsed_docstrings:,} docstrings in {perf_counter() - started:.2f}s", flush=True)
         reset_mkdocstrings = zensical_mkdocstrings.reset
-        zensical_mkdocstrings.reset = _noop_mkdocstrings_reset  # ty: ignore[invalid-assignment]
+        zensical_mkdocstrings.reset = _noop_mkdocstrings_reset  # ty:ignore[invalid-assignment]
         try:
             if parsed_args.command == "build":
                 build(
