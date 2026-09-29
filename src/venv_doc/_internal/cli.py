@@ -172,7 +172,7 @@ def _venv_python(venv_path: Path) -> Path:
 
 def _venv_packages(python: Path) -> tuple[list[str], list[str]]:
     """Return public packages and their import roots from a Python interpreter."""
-    result = run(
+    result = run(  # noqa: S603
         [str(python), "-c", _VENV_INFO_SCRIPT],
         capture_output=True,
         check=True,
@@ -259,8 +259,7 @@ def _get_python_handler(config_path: Path) -> Any:
         config=config,
     )
     handlers = zensical_mkdocstrings.HANDLERS
-    assert handlers is not None
-    return handlers.get_handler("python")
+    return handlers.get_handler("python")  # ty:ignore[unresolved-attribute]
 
 
 def _load_packages(handler: Any, packages: list[str]) -> dict[str, Module]:
@@ -274,7 +273,7 @@ def _load_packages(handler: Any, packages: list[str]) -> dict[str, Module]:
         extensions=load_extensions(*extensions),
         search_paths=handler._paths,
         docstring_parser=parser,
-        docstring_options=parser_options,  # ty: ignore[invalid-argument-type]
+        docstring_options=parser_options,  # ty:ignore[invalid-argument-type]
         modules_collection=handler._modules_collection,
         lines_collection=handler._lines_collection,
         allow_inspection=options.allow_inspection,

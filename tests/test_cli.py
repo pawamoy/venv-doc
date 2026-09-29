@@ -23,13 +23,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import mkdocstrings_handlers
 import pytest
 from griffe import Class, Docstring, Function, Module
 from markdown import Markdown
-from mkdocstrings_handlers.python import PythonHandler
 from zensical.compat import mkdocstrings as zensical_mkdocstrings
 from zensical.config import parse_config
 
@@ -42,6 +41,9 @@ from venv_doc._internal.cli import (
     _venv_python,
 )
 from venv_doc._internal.sphinx_roles import _SphinxRolesExtension
+
+if TYPE_CHECKING:
+    from mkdocstrings_handlers.python import PythonHandler
 
 
 def test_main(monkeypatch: pytest.MonkeyPatch) -> None:

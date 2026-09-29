@@ -22,12 +22,13 @@ from re import fullmatch
 from typing import TYPE_CHECKING
 from xml.etree.ElementTree import Element
 
-from markdown import Markdown
 from markdown.extensions import Extension
 from markdown.inlinepatterns import InlineProcessor
 
 if TYPE_CHECKING:
     from re import Match
+
+    from markdown import Markdown
 
 
 _PYTHON_ROLES = "attr|class|const|data|deco|exc|func|meth|mod|obj|type"
@@ -46,7 +47,7 @@ _EXPLICIT_TITLE_RE = r"(?P<title>.+?)\s*<(?P<target>[^<>]+)>"
 class _SphinxRoleInlineProcessor(InlineProcessor):
     """Turn supported Python-domain Sphinx roles into mkdocs-autorefs markers."""
 
-    def handleMatch(self, m: Match[str], data: str) -> tuple[Element, int, int]:
+    def handleMatch(self, m: Match[str], data: str) -> tuple[Element, int, int]:  # noqa: ARG002,N802
         """Create an ``autoref`` element for a Sphinx role where possible."""
         role = m.group("role")
         content = m.group("content")
@@ -95,7 +96,7 @@ class _SphinxRolesExtension(Extension):
 
     name = "venv-doc-sphinx-roles"
 
-    def extendMarkdown(self, md: Markdown) -> None:
+    def extendMarkdown(self, md: Markdown) -> None:  # noqa: N802
         """Register the role processor before Markdown's code-span processor."""
         md.inlinePatterns.register(
             _SphinxRoleInlineProcessor(_SPHINX_ROLE_RE, md),
